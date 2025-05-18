@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Ramen Bag - Vertical Tear</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.js"></script>
+    <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f0f0f0; }
+        canvas { border: 1px solid black; }
+    </style>
+</head>
+<body>
+    <script>
+        let handpose;
+        let video;
+        let predictions = [];
+
+        let ramenBag;
+        let isTorn = false;
+        let tearPointX = -1;
+        let tearProgress = 0;
+        const MAX_TEAR_OPENING = 60;
+        const TEAR_COLOR = [100, 100, 100];
+
+        let isPinching = false;
+        let pinchStartX = -1;
+        let pinchStartY = -1; // 추가: 핀치 시작 Y 좌표
+        const PINCH_THRESHOLD = 35;
+        const TEAR_MOVEMENT_THRESHOLD = 20; // 상하 움직임 감도를 위해 필요시 조정
+
+        let fingerTipSize = 15;
+
+
+        function setup() {
+            createCanvas(640, 480);
+            video = createCapture(VIDEO);
+            video.size(width, height);
+            video.hide();
+
+            ramenBag = new RamenBag(width / 2, height / 2, 200, 300);
+            handpose = ml5.handpose(video, modelReady);
+            handpose.on('predict', results => {
+                predictions = results;
+            });
+        }
+
+        function modelReady() {
+            console.log('Handpose Model Loaded!');
+        }
+
+        function draw() {
+            background(220);
+            ramenBag.display();
+
+            if (predictions.length > 0) {
+                const hand = predictions[0];
+                const thumb = hand.landmarks[4];
+                const indexFinger = hand.landmarks[8];
+
+                let thumbX = map(thumb[0], 0, video.width, 0, width);
+                let thumbY = map(thumb[1], 0, video.height, 0, height);
+                let indexX = map(indexFinger[0], 0, video.width, 0, width);
+                let indexY = map(indexFinger[1], 0, video.height, 0, height);
+                
+                thumbX = width - thumbX;
+                indexX = width - indexX;
+
+                fill(0, 255, 0, 150);
+                noStroke();
+                ellipse(thumbX, thumbY, fingerTipSize, fingerTipSize);
+                fill(0, 0, 255, 150);
+                ellipse(indexX, indexY, fingerTipSize, fingerTipSize);
+
+                if (!isTorn) {
+                    checkTearInteraction(thumbX, thumbY, indexX, indexY);
+                }
+            } else {
+                isPinching = false; // 손이 감지되지 않으면 핀치 상태 해제
+            }
+
+            fill(0);
+            textAlign(CENTER, TOP);
+            textSize(16);
+            text("손가락을 라면 봉지 위에 올리고,\n엄지와 검지를 맞닿아 핀치한 후 상하로 움직여 뜯어보세요.", width / 2, 20); // 수정된 안내
+            if (isTorn) {
+                text("봉지가 뜯어졌습니다!", width / 2, height - 40);
+            }
+        }
+
+        function checkTearInteraction(thumbX, thumbY, indexX, indexY) {
+            let pinchCenterX = (thumbX + indexX) / 2;
+            let pinchCenterY = (thumbY + indexY) / 2;
+            let distance = dist(thumbX, thumbY, indexX, indexY);
+
+            if (distance < PINCH_THRESHOLD) { // 핀치 감지
+                if (ramenBag.isOver(pinchCenterX, pinchCenterY)) { // 핀치 위치가 라면 봉지 위인가
+                    if (!isPinching) { // 핀치 시작
+                        isPinching = true;
+                        pinchStartX = pinchCenterX; // 찢어지는 가로 위치 계산에 사용
+                        pinchStartY = pinchCenterY; // 수정: 핀치 시작 Y 좌표 저장
+                        fill(255,0,0); // 핀치 시작 시 빨간색 점으로 표시 (디버깅용)
+                        ellipse(pinchCenterX, pinchCenterY, fingerTipSize * 1.5, fingerTipSize * 1.5);
+                    } else { // 핀치 유지 상태
+                        // let movementX = pinchCenterX - pinchStartX; // 기존 X축 움직임
+                        let movementY = pinchCenterY - pinchStartY; // 수정: Y축(상하) 움직임 계산
+                        fill(255,165,0); // 핀치 중 주황색 점으로 표시 (디버깅용)
+                        ellipse(pinchCenterX, pinchCenterY, fingerTipSize * 1.5, fingerTipSize * 1.5);
+
+                        // if (abs(movementX) > TEAR_MOVEMENT_THRESHOLD) { // 기존 X축 조건
+                        if (abs(movementY) > TEAR_MOVEMENT_THRESHOLD) { // 수정: Y축 움직임으로 봉투 뜯김 조건 변경
+                            isTorn = true;
+                            tearPointX = pinchCenterX - (ramenBag.x - ramenBag.w / 2);
+                            tearPointX = constrain(tearPointX, ramenBag.w * 0.1, ramenBag.w * 0.9);
+                            // tearProgress = min(tearProgress + abs(movementX) * 0.1, MAX_TEAR_OPENING); // 기존 X축 기반
+                            tearProgress = min(tearProgress + abs(movementY) * 0.1, MAX_TEAR_OPENING); // 수정: Y축 움직임 기반으로 찢어지는 정도 업데이트
+                            isPinching = false; // 뜯어진 후 핀치 상태 해제
+                        }
+                    }
+                } else { // 핀치 위치가 봉지 밖이면
+                    isPinching = false;
+                }
+            } else { // 핀치하지 않으면
+                isPinching = false;
+            }
+        }
+
+        class RamenBag {
+            constructor(x, y, w, h) {
+                this.x = x; this.y = y; this.w = w; this.h = h;
+                this.color = color(255, 80, 80);
+                this.labelColor = color(255);
+                this.brandColor = color(255,255,0);
+            }
+            isOver(px, py) {
+                return px > this.x - this.w / 2 && px < this.x + this.w / 2 &&
+                       py > this.y - this.h / 2 && py < this.y + this.h / 2;
+            }
+            display() {
+                push();
+                translate(this.x, this.y);
+                if (!isTorn) {
+                    fill(this.color); noStroke(); rectMode(CENTER);
+                    rect(0, 0, this.w, this.h, 10);
+                    fill(this.brandColor); ellipse(0, -this.h * 0.25, this.w * 0.6, this.h * 0.2);
+                    textAlign(CENTER, CENTER); textSize(this.w / 5); fill(0);
+                    text("라면", 0, -this.h * 0.25);
+                    textSize(this.w / 15); fill(this.labelColor);
+                    text("맛있는 라면", 0, this.h * 0.1);
+                    text("Net Wt. 120g", 0, this.h * 0.25);
+                } else {
+                    rectMode(CORNER);
+                    let bagOriginX = -this.w / 2; let bagOriginY = -this.h / 2;
+                    let currentTearX = bagOriginX + tearPointX;
+                    let opening = tearProgress / 2; // tearProgress는 이제 Y축 움직임에 따라 증가
+                    fill(this.color); noStroke();
+                    // 왼쪽 부분
+                    beginShape();
+                    vertex(bagOriginX, bagOriginY); vertex(currentTearX - opening, bagOriginY);
+                    for (let y_ = bagOriginY; y_ <= bagOriginY + this.h; y_ += 10) vertex(currentTearX - opening + random(-5, 2), y_);
+                    vertex(currentTearX - opening, bagOriginY + this.h); vertex(bagOriginX, bagOriginY + this.h);
+                    endShape(CLOSE);
+                    // 오른쪽 부분
+                    beginShape();
+                    vertex(currentTearX + opening, bagOriginY); vertex(bagOriginX + this.w, bagOriginY);
+                    vertex(bagOriginX + this.w, bagOriginY + this.h); vertex(currentTearX + opening, bagOriginY + this.h);
+                    for (let y_ = bagOriginY + this.h; y_ >= bagOriginY; y_ -= 10) vertex(currentTearX + opening + random(-2, 5), y_);
+                    endShape(CLOSE);
+                    // 찢어진 단면
+                    fill(TEAR_COLOR); beginShape();
+                    for (let y_ = bagOriginY; y_ <= bagOriginY + this.h; y_ += 8) vertex(currentTearX - opening + random(-4,1), y_);
+                    for (let y_ = bagOriginY + this.h; y_ >= bagOriginY; y_ -= 8) vertex(currentTearX + opening + random(-1,4), y_);
+                    endShape(CLOSE);
+                    // 찢어진 후 로고 표시 (부분적으로 보일 수 있음)
+                    fill(this.brandColor); ellipse(0, -this.h * 0.25, this.w * 0.6, this.h * 0.2);
+                    textAlign(CENTER, CENTER); textSize(this.w / 5); fill(0);
+                    if (currentTearX - opening > bagOriginX + this.w * 0.3) text("라", -this.w*0.15, -this.h * 0.25);
+                    if (currentTearX + opening < bagOriginX + this.w * 0.7) text("면", this.w*0.15, -this.h * 0.25);
+                }
+                pop();
+            }
+        }
+    </script>
+</body>
+</html>
